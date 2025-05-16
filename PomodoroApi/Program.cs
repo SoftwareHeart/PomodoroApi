@@ -4,10 +4,10 @@ using PomodoroApi.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 // Kestrel'ý açýkça yapýlandýr
-builder.WebHost.ConfigureKestrel(serverOptions =>
-{
-    serverOptions.ListenAnyIP(80);
-});
+//builder.WebHost.ConfigureKestrel(serverOptions =>
+//{
+//    serverOptions.ListenAnyIP(80);
+//});
 
 // Add services to the container.
 builder.Services.AddControllers();

@@ -113,5 +113,65 @@ namespace PomodoroApi.Controllers
 
             return NoContent();
         }
+
+
+        // PomodoroController.cs'ye eklenecek
+        [HttpGet("weekly-stats")]
+        public async Task<ActionResult<object>> GetWeeklyStats(string userId = "defaultUser")
+        {
+            if (string.IsNullOrEmpty(userId))
+            {
+                userId = "defaultUser";
+            }
+
+            // Son 7 günün tarihlerini hesapla
+            var today = DateTime.Today;
+            var last7Days = Enumerable.Range(0, 7)
+                .Select(i => today.AddDays(-i))
+                .Reverse()
+                .ToList();
+
+            var weeklyStats = new List<object>();
+
+            foreach (var date in last7Days)
+            {
+                // Bu tarih için tamamlanan pomodorolar
+                var completedSessions = await _context.PomodoroSessions
+                    .Where(s => s.UserId == userId &&
+                           s.IsCompleted &&
+                           s.EndTime.HasValue &&
+                           s.EndTime.Value.Date == date)
+                    .ToListAsync();
+
+                // Türkçe gün ismini al
+                string dayName = GetTurkishDayName(date.DayOfWeek);
+
+                weeklyStats.Add(new
+                {
+                    date = date.ToString("yyyy-MM-dd"),
+                    name = dayName, // Örn: "Pzt", "Sal", vs.
+                    tamamlanan = completedSessions.Count,
+                    dakika = completedSessions.Sum(s => s.Duration)
+                });
+            }
+
+            return Ok(weeklyStats);
+        }
+
+        // Gün adlarını Türkçe olarak döndüren yardımcı metod
+        private string GetTurkishDayName(DayOfWeek dayOfWeek)
+        {
+            switch (dayOfWeek)
+            {
+                case DayOfWeek.Monday: return "Pzt";
+                case DayOfWeek.Tuesday: return "Sal";
+                case DayOfWeek.Wednesday: return "Çar";
+                case DayOfWeek.Thursday: return "Per";
+                case DayOfWeek.Friday: return "Cum";
+                case DayOfWeek.Saturday: return "Cmt";
+                case DayOfWeek.Sunday: return "Paz";
+                default: return string.Empty;
+            }
+        }
     }
 }
