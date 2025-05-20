@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PomodoroApi.Data;
 
@@ -11,9 +12,11 @@ using PomodoroApi.Data;
 namespace PomodoroApi.Migrations
 {
     [DbContext(typeof(PomodoroDbContext))]
-    partial class PomodoroDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250520205754_AddIdentity")]
+    partial class AddIdentity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
