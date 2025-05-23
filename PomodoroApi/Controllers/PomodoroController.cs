@@ -287,7 +287,234 @@ namespace PomodoroApi.Controllers
                 return StatusCode(500, new { message = "Haftalık istatistikler getirilirken bir hata oluştu" });
             }
         }
+        [HttpGet("calendar-data")]
+        public async Task<ActionResult<object>> GetCalendarData([FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null)
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
+                if (string.IsNullOrEmpty(userId))
+                {
+                    _logger.LogWarning("Takvim verileri için kullanıcı kimliği alınamadı");
+                    return Unauthorized(new { message = "Kullanıcı kimliği alınamadı" });
+                }
+
+                // Varsayılan tarih aralığı: Son 90 gün
+                var end = endDate ?? DateTime.Today;
+                var start = startDate ?? end.AddDays(-90);
+
+                _logger.LogInformation($"Kullanıcı {userId} için {start:yyyy-MM-dd} - {end:yyyy-MM-dd} takvim verileri getiriliyor");
+
+                // Belirtilen tarih aralığındaki tamamlanmış oturumları getir
+                var sessions = await _context.PomodoroSessions
+                    .Where(s => s.UserId == userId &&
+                               s.IsCompleted &&
+                               s.EndTime.HasValue &&
+                               s.EndTime.Value.Date >= start.Date &&
+                               s.EndTime.Value.Date <= end.Date)
+                    .ToListAsync();
+
+                // Günlük bazda grupla
+                var dailyData = sessions
+                    .GroupBy(s => s.EndTime.Value.Date)
+                    .Select(g => new
+                    {
+                        date = g.Key.ToString("yyyy-MM-dd"),
+                        pomodoros = g.Count(),
+                        minutes = g.Sum(s => s.Duration),
+                        sessions = g.Select(s => new
+                        {
+                            id = s.Id,
+                            taskName = s.TaskName,
+                            duration = s.Duration,
+                            startTime = s.StartTime,
+                            endTime = s.EndTime
+                        }).ToList()
+                    })
+                    .OrderBy(x => x.date)
+                    .ToList();
+
+                // Tarih aralığındaki tüm günleri doldur (boş günler için 0 değerleri)
+                var allDays = new List<object>();
+                for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
+                {
+                    var dateString = date.ToString("yyyy-MM-dd");
+                    var existingData = dailyData.FirstOrDefault(d => d.date == dateString);
+
+                    if (existingData != null)
+                    {
+                        allDays.Add(existingData);
+                    }
+                    else
+                    {
+                        allDays.Add(new
+                        {
+                            date = dateString,
+                            pomodoros = 0,
+                            minutes = 0,
+                            sessions = new List<object>()
+                        });
+                    }
+                }
+
+                return Ok(new
+                {
+                    startDate = start.ToString("yyyy-MM-dd"),
+                    endDate = end.ToString("yyyy-MM-dd"),
+                    data = allDays
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Takvim verileri getirilirken hata oluştu");
+                return StatusCode(500, new { message = "Takvim verileri getirilirken bir hata oluştu" });
+            }
+        }
+
+        // GET: api/Pomodoro/monthly-stats
+        [HttpGet("monthly-stats")]
+        public async Task<ActionResult<object>> GetMonthlyStats([FromQuery] int year, [FromQuery] int month)
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    _logger.LogWarning("Aylık istatistikler için kullanıcı kimliği alınamadı");
+                    return Unauthorized(new { message = "Kullanıcı kimliği alınamadı" });
+                }
+
+                _logger.LogInformation($"Kullanıcı {userId} için {year}/{month} aylık istatistikleri getiriliyor");
+
+                // Ayın başı ve sonu
+                var monthStart = new DateTime(year, month, 1);
+                var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+                // Bu aydaki tamamlanmış oturumları getir
+                var monthlySessions = await _context.PomodoroSessions
+                    .Where(s => s.UserId == userId &&
+                               s.IsCompleted &&
+                               s.EndTime.HasValue &&
+                               s.EndTime.Value.Date >= monthStart.Date &&
+                               s.EndTime.Value.Date <= monthEnd.Date)
+                    .ToListAsync();
+
+                // İstatistikleri hesapla
+                var totalPomodoros = monthlySessions.Count;
+                var totalMinutes = monthlySessions.Sum(s => s.Duration);
+                var activeDays = monthlySessions
+                    .GroupBy(s => s.EndTime.Value.Date)
+                    .Count();
+                var averagePerDay = activeDays > 0 ? (double)totalPomodoros / activeDays : 0;
+
+                // En verimli gün
+                var dailyGroups = monthlySessions
+                    .GroupBy(s => s.EndTime.Value.Date)
+                    .Select(g => new
+                    {
+                        date = g.Key,
+                        pomodoros = g.Count(),
+                        minutes = g.Sum(s => s.Duration)
+                    })
+                    .OrderByDescending(x => x.pomodoros)
+                    .FirstOrDefault();
+
+                return Ok(new
+                {
+                    month = month,
+                    year = year,
+                    totalPomodoros = totalPomodoros,
+                    totalMinutes = totalMinutes,
+                    totalHours = Math.Round((double)totalMinutes / 60, 1),
+                    activeDays = activeDays,
+                    averagePerDay = Math.Round(averagePerDay, 1),
+                    mostProductiveDay = dailyGroups != null ? new
+                    {
+                        date = dailyGroups.date.ToString("yyyy-MM-dd"),
+                        pomodoros = dailyGroups.pomodoros,
+                        minutes = dailyGroups.minutes
+                    } : null
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Aylık istatistikler getirilirken hata oluştu");
+                return StatusCode(500, new { message = "Aylık istatistikler getirilirken bir hata oluştu" });
+            }
+        }
+
+        // GET: api/Pomodoro/daily-detail
+        [HttpGet("daily-detail")]
+        public async Task<ActionResult<object>> GetDailyDetail([FromQuery] DateTime date)
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    _logger.LogWarning("Günlük detay için kullanıcı kimliği alınamadı");
+                    return Unauthorized(new { message = "Kullanıcı kimliği alınamadı" });
+                }
+
+                _logger.LogInformation($"Kullanıcı {userId} için {date:yyyy-MM-dd} günlük detayları getiriliyor");
+
+                // Belirtilen gündeki tamamlanmış oturumları getir
+                var dailySessions = await _context.PomodoroSessions
+                    .Where(s => s.UserId == userId &&
+                               s.IsCompleted &&
+                               s.EndTime.HasValue &&
+                               s.EndTime.Value.Date == date.Date)
+                    .OrderBy(s => s.StartTime)
+                    .ToListAsync();
+
+                var totalPomodoros = dailySessions.Count;
+                var totalMinutes = dailySessions.Sum(s => s.Duration);
+
+                // Görev bazında grupla
+                var taskGroups = dailySessions
+                    .GroupBy(s => s.TaskName)
+                    .Select(g => new
+                    {
+                        taskName = g.Key,
+                        pomodoros = g.Count(),
+                        minutes = g.Sum(s => s.Duration),
+                        sessions = g.Select(s => new
+                        {
+                            id = s.Id,
+                            startTime = s.StartTime,
+                            endTime = s.EndTime,
+                            duration = s.Duration
+                        }).ToList()
+                    })
+                    .OrderByDescending(x => x.pomodoros)
+                    .ToList();
+
+                return Ok(new
+                {
+                    date = date.ToString("yyyy-MM-dd"),
+                    totalPomodoros = totalPomodoros,
+                    totalMinutes = totalMinutes,
+                    totalHours = Math.Round((double)totalMinutes / 60, 1),
+                    tasks = taskGroups,
+                    sessions = dailySessions.Select(s => new
+                    {
+                        id = s.Id,
+                        taskName = s.TaskName,
+                        duration = s.Duration,
+                        startTime = s.StartTime,
+                        endTime = s.EndTime
+                    }).ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Günlük detay getirilirken hata oluştu");
+                return StatusCode(500, new { message = "Günlük detay getirilirken bir hata oluştu" });
+            }
+        }
         // Gün adlarını Türkçe olarak döndüren yardımcı metod
         private string GetTurkishDayName(DayOfWeek dayOfWeek)
         {
