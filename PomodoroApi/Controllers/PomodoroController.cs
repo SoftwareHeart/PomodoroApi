@@ -70,15 +70,28 @@ namespace PomodoroApi.Controllers
                     .Where(s => s.UserId == userId && s.IsCompleted)
                     .ToListAsync();
 
+                _logger.LogInformation($"Toplam {completedSessions.Count} tamamlanmış oturum bulundu");
+
+                // Bugünkü oturumları filtrele
+                var todaySessions = completedSessions
+                    .Where(s => s.EndTime.HasValue && s.EndTime.Value.Date == DateTime.Today)
+                    .ToList();
+
+                _logger.LogInformation($"Bugün {todaySessions.Count} oturum tamamlandı");
+
                 var statistics = new
                 {
                     TotalCompletedSessions = completedSessions.Count,
                     TotalMinutesWorked = completedSessions.Sum(s => s.Duration),
                     AverageSessionDuration = completedSessions.Any() ? completedSessions.Average(s => s.Duration) : 0,
-                    CompletedToday = completedSessions.Count(s => s.EndTime.HasValue && s.EndTime.Value.Date == DateTime.Today),
-                    MinutesToday = completedSessions
-                        .Where(s => s.EndTime.HasValue && s.EndTime.Value.Date == DateTime.Today)
-                        .Sum(s => s.Duration)
+                    CompletedToday = todaySessions.Count, // Her oturum = 1 pomodoro
+                    MinutesToday = todaySessions.Sum(s => s.Duration),
+                    DebugInfo = new // Debug için
+                    {
+                        TotalSessionsInDb = completedSessions.Count,
+                        TodaySessionsCount = todaySessions.Count,
+                        TodaySessionIds = todaySessions.Select(s => s.Id).ToList()
+                    }
                 };
 
                 return Ok(statistics);
@@ -89,6 +102,7 @@ namespace PomodoroApi.Controllers
                 return StatusCode(500, new { message = "İstatistikler getirilirken bir hata oluştu" });
             }
         }
+
 
         // GET: api/Pomodoro/5
         [HttpGet("{id}")]
@@ -262,9 +276,9 @@ namespace PomodoroApi.Controllers
                     // Bu tarih için tamamlanan pomodorolar
                     var completedSessions = await _context.PomodoroSessions
                         .Where(s => s.UserId == userId &&
-                               s.IsCompleted &&
-                               s.EndTime.HasValue &&
-                               s.EndTime.Value.Date == date)
+                                   s.IsCompleted &&
+                                   s.EndTime.HasValue &&
+                                   s.EndTime.Value.Date == date)
                         .ToListAsync();
 
                     // Türkçe gün ismini al
@@ -274,9 +288,11 @@ namespace PomodoroApi.Controllers
                     {
                         date = date.ToString("yyyy-MM-dd"),
                         name = dayName, // Örn: "Pzt", "Sal", vs.
-                        tamamlanan = completedSessions.Count,
+                        tamamlanan = completedSessions.Count, // Her oturum = 1 pomodoro
                         dakika = completedSessions.Sum(s => s.Duration)
                     });
+
+                    _logger.LogInformation($"{date:yyyy-MM-dd} ({dayName}): {completedSessions.Count} pomodoro, {completedSessions.Sum(s => s.Duration)} dakika");
                 }
 
                 return Ok(weeklyStats);
@@ -315,13 +331,16 @@ namespace PomodoroApi.Controllers
                                s.EndTime.Value.Date <= end.Date)
                     .ToListAsync();
 
-                // Günlük bazda grupla
+                // Debug için loglama ekle
+                _logger.LogInformation($"Toplam {sessions.Count} tamamlanmış oturum bulundu");
+
+                // Günlük bazda grupla - HER OTURUM AYRI POMODORO
                 var dailyData = sessions
                     .GroupBy(s => s.EndTime.Value.Date)
                     .Select(g => new
                     {
                         date = g.Key.ToString("yyyy-MM-dd"),
-                        pomodoros = g.Count(),
+                        pomodoros = g.Count(), // Her oturum = 1 pomodoro
                         minutes = g.Sum(s => s.Duration),
                         sessions = g.Select(s => new
                         {
@@ -334,6 +353,12 @@ namespace PomodoroApi.Controllers
                     })
                     .OrderBy(x => x.date)
                     .ToList();
+
+                // Debug için günlük verileri logla
+                foreach (var day in dailyData)
+                {
+                    _logger.LogInformation($"Tarih: {day.date}, Pomodoro: {day.pomodoros}, Dakika: {day.minutes}");
+                }
 
                 // Tarih aralığındaki tüm günleri doldur (boş günler için 0 değerleri)
                 var allDays = new List<object>();
@@ -362,7 +387,8 @@ namespace PomodoroApi.Controllers
                 {
                     startDate = start.ToString("yyyy-MM-dd"),
                     endDate = end.ToString("yyyy-MM-dd"),
-                    data = allDays
+                    data = allDays,
+                    totalSessions = sessions.Count // Debug için
                 });
             }
             catch (Exception ex)
@@ -371,7 +397,6 @@ namespace PomodoroApi.Controllers
                 return StatusCode(500, new { message = "Takvim verileri getirilirken bir hata oluştu" });
             }
         }
-
         // GET: api/Pomodoro/monthly-stats
         [HttpGet("monthly-stats")]
         public async Task<ActionResult<object>> GetMonthlyStats([FromQuery] int year, [FromQuery] int month)
@@ -470,7 +495,9 @@ namespace PomodoroApi.Controllers
                     .OrderBy(s => s.StartTime)
                     .ToListAsync();
 
-                var totalPomodoros = dailySessions.Count;
+                _logger.LogInformation($"{date:yyyy-MM-dd} tarihinde {dailySessions.Count} oturum bulundu");
+
+                var totalPomodoros = dailySessions.Count; // Her oturum = 1 pomodoro
                 var totalMinutes = dailySessions.Sum(s => s.Duration);
 
                 // Görev bazında grupla
@@ -479,7 +506,7 @@ namespace PomodoroApi.Controllers
                     .Select(g => new
                     {
                         taskName = g.Key,
-                        pomodoros = g.Count(),
+                        pomodoros = g.Count(), // Her oturum = 1 pomodoro
                         minutes = g.Sum(s => s.Duration),
                         sessions = g.Select(s => new
                         {
@@ -506,7 +533,13 @@ namespace PomodoroApi.Controllers
                         duration = s.Duration,
                         startTime = s.StartTime,
                         endTime = s.EndTime
-                    }).ToList()
+                    }).ToList(),
+                    debugInfo = new // Debug için
+                    {
+                        rawSessionCount = dailySessions.Count,
+                        isCompletedFilter = dailySessions.All(s => s.IsCompleted),
+                        endTimeFilter = dailySessions.All(s => s.EndTime.HasValue)
+                    }
                 });
             }
             catch (Exception ex)
