@@ -9,16 +9,16 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// DbContext yapýlandýrmasý
+// DbContext yapï¿½landï¿½rmasï¿½
 builder.Services.AddDbContext<PomodoroDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Identity yapýlandýrmasý
+// Identity yapï¿½landï¿½rmasï¿½
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
     .AddEntityFrameworkStores<PomodoroDbContext>()
     .AddDefaultTokenProviders();
 
-// JWT kimlik doðrulama yapýlandýrmasý
+// JWT kimlik doï¿½rulama yapï¿½landï¿½rmasï¿½
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -41,12 +41,15 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Diðer servislerinizi buraya ekleyin
+// DiÄŸer servislerinizi buraya ekleyin
+builder.Services.AddScoped<PomodoroApi.Services.IPomodoroService, PomodoroApi.Services.PomodoroService>();
+builder.Services.AddScoped<PomodoroApi.Services.IUserService, PomodoroApi.Services.UserService>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// CORS yapýlandýrmasý
+// CORS yapï¿½landï¿½rmasï¿½
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", builder =>
@@ -57,7 +60,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// HTTP request pipeline'ýný yapýlandýrýn
+// HTTP request pipeline'ï¿½nï¿½ yapï¿½landï¿½rï¿½n
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

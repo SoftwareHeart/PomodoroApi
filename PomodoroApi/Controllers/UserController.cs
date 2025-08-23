@@ -1,16 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using Microsoft.IdentityModel.Tokens;
-using PomodoroApi.Models;
 using PomodoroApi.Models.DTO;
-using System;
-using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
+using PomodoroApi.Services;
 using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PomodoroApi.Controllers
 {
@@ -18,127 +10,98 @@ namespace PomodoroApi.Controllers
     [ApiController]
     public class UserController : ControllerBase
     {
-        private readonly UserManager<ApplicationUser> _userManager;
-        private readonly SignInManager<ApplicationUser> _signInManager;
-        private readonly IConfiguration _configuration;
+        private readonly IUserService _userService;
+        private readonly ILogger<UserController> _logger;
 
-        public UserController(
-            UserManager<ApplicationUser> userManager,
-            SignInManager<ApplicationUser> signInManager,
-            IConfiguration configuration)
+        public UserController(IUserService userService, ILogger<UserController> logger)
         {
-            _userManager = userManager;
-            _signInManager = signInManager;
-            _configuration = configuration;
+            _userService = userService;
+            _logger = logger;
         }
 
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto model)
         {
-            if (!ModelState.IsValid)
+            try
             {
-                return BadRequest(ModelState);
-            }
-
-            var user = new ApplicationUser { UserName = model.Username, Email = model.Email };
-            var result = await _userManager.CreateAsync(user, model.Password);
-
-            if (!result.Succeeded)
-            {
-                foreach (var error in result.Errors)
+                if (!ModelState.IsValid)
                 {
-                    ModelState.AddModelError(string.Empty, error.Description);
+                    return BadRequest(ModelState);
                 }
-                return BadRequest(ModelState);
-            }
 
-            return Ok(new { message = "Kullanıcı başarıyla kaydedildi" });
+                var result = await _userService.RegisterAsync(model);
+
+                if (!result.Succeeded)
+                {
+                    foreach (var error in result.Errors)
+                    {
+                        ModelState.AddModelError(string.Empty, error.Description);
+                    }
+                    return BadRequest(ModelState);
+                }
+
+                return Ok(new { message = "Kullanıcı başarıyla kaydedildi" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Kullanıcı kaydı sırasında hata oluştu");
+                return StatusCode(500, new { message = "Kullanıcı kaydı sırasında bir hata oluştu" });
+            }
         }
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginUserDto model)
         {
-            if (!ModelState.IsValid)
+            try
             {
-                return BadRequest(ModelState);
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var result = await _userService.LoginAsync(model);
+
+                if (result == null)
+                {
+                    return Unauthorized(new { message = "Kullanıcı adı veya şifre hatalı" });
+                }
+
+                return Ok(result);
             }
-
-            var user = await _userManager.FindByNameAsync(model.Username) ??
-                       await _userManager.FindByEmailAsync(model.Username);
-
-            if (user == null)
+            catch (Exception ex)
             {
-                return Unauthorized(new { message = "Kullanıcı adı veya şifre hatalı" });
+                _logger.LogError(ex, "Kullanıcı girişi sırasında hata oluştu");
+                return StatusCode(500, new { message = "Kullanıcı girişi sırasında bir hata oluştu" });
             }
-
-            var result = await _signInManager.CheckPasswordSignInAsync(user, model.Password, false);
-
-            if (!result.Succeeded)
-            {
-                return Unauthorized(new { message = "Kullanıcı adı veya şifre hatalı" });
-            }
-
-            var token = GenerateJwtToken(user);
-
-            return Ok(new
-            {
-                token = token,
-                userId = user.Id,
-                username = user.UserName,
-                email = user.Email
-            });
         }
 
         [Authorize]
         [HttpGet("profile")]
         public async Task<IActionResult> GetProfile()
         {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-            if (string.IsNullOrEmpty(userId))
+            try
             {
-                return Unauthorized();
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new { message = "Kullanıcı kimliği alınamadı" });
+                }
+
+                var profile = await _userService.GetProfileAsync(userId);
+
+                if (profile == null)
+                {
+                    return NotFound(new { message = "Kullanıcı bulunamadı" });
+                }
+
+                return Ok(profile);
             }
-
-            var user = await _userManager.FindByIdAsync(userId);
-
-            if (user == null)
+            catch (Exception ex)
             {
-                return NotFound();
+                _logger.LogError(ex, "Kullanıcı profili getirilirken hata oluştu");
+                return StatusCode(500, new { message = "Kullanıcı profili getirilirken bir hata oluştu" });
             }
-
-            return Ok(new UserProfileDto
-            {
-                Id = user.Id,
-                Username = user.UserName,
-                Email = user.Email,
-            });
-        }
-
-        private string GenerateJwtToken(ApplicationUser user)
-        {
-            var claims = new List<Claim>
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, user.Id),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-                new Claim(ClaimTypes.NameIdentifier, user.Id),
-                new Claim(ClaimTypes.Name, user.UserName),
-                new Claim(ClaimTypes.Email, user.Email)
-            };
-
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JwtSettings:Key"]));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-            var expires = DateTime.Now.AddDays(Convert.ToDouble(_configuration["JwtSettings:ExpireDays"]));
-
-            var token = new JwtSecurityToken(
-                _configuration["JwtSettings:Issuer"],
-                _configuration["JwtSettings:Audience"],
-                claims,
-                expires: expires,
-                signingCredentials: creds
-            );
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
         }
     }
 }
